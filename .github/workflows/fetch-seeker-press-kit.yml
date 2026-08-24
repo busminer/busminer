@@ -1,0 +1,57 @@
+name: Fetch Seeker Press Kit
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Prepare
+        run: |
+          set -euxo pipefail
+          mkdir -p seeker-press-kit/drive seeker-press-kit/official-site
+
+      - name: Download public Google Drive folder
+        run: |
+          set -euxo pipefail
+          python -m pip install --upgrade pip gdown
+          gdown --folder "https://drive.google.com/drive/folders/1nBAP8JjbqvqDgIhzdESU_GjmuG3QWQDZ?usp=drive_link" \
+            --output seeker-press-kit/drive \
+            --remaining-ok
+
+      - name: Download official Seeker page assets as fallback and cross-check
+        run: |
+          set -euxo pipefail
+          cd seeker-press-kit/official-site
+          curl -fL --retry 5 --retry-all-errors 'https://framerusercontent.com/images/uRl7JxfkTE29dvAyFy2juzd37yQ.png?height=2304&width=4096' -o 01_seed_vault_phone_back.png
+          curl -fL --retry 5 --retry-all-errors 'https://framerusercontent.com/images/A5razLqsxkVWckN83FMAayBysY.png?height=1918&width=2016' -o 02_seeker_activity.png
+          curl -fL --retry 5 --retry-all-errors 'https://framerusercontent.com/images/lXLHxWVMwKk85PAxg57ch8GS1Sg.png?height=1918&width=2016' -o 03_seed_vault_screen.png
+          curl -fL --retry 5 --retry-all-errors 'https://framerusercontent.com/images/2FKVDwETFoFAhQ1EHsGJbkKJo.png?height=1918&width=2016' -o 04_dapp_store.png
+          curl -fL --retry 5 --retry-all-errors 'https://framerusercontent.com/images/iQ2KIOsoLiXJdBKo8itPgMCfQ0.png?height=1918&width=2016' -o 05_stake_sol.png
+          curl -fL --retry 5 --retry-all-errors 'https://framerusercontent.com/images/B02G6DQtqd71wvPIoYTQYPoIeBU.png?height=2640&width=3024' -o 06_dapp_cards.png
+          curl -fL --retry 5 --retry-all-errors 'https://framerusercontent.com/images/DNHQn9xLCAgdUExTPRvaB407T0g.png?height=880&width=1008' -o 07_seeker_orb.png
+          curl -fL --retry 5 --retry-all-errors 'https://framerusercontent.com/images/htvrYyZqQhW6XD14SXi57kJ1zZw.png?height=1320&width=1542' -o 08_seed_vault_closeup.png
+          curl -fL --retry 5 --retry-all-errors 'https://framerusercontent.com/images/HGcfIctgy6Z7ijulmYefhJNZvVM.png?height=1320&width=1512' -o 09_seeker_id.png
+          curl -fL --retry 5 --retry-all-errors 'https://framerusercontent.com/images/r5AkKHp00UreluYDLhnB659Bm28.png?height=2118&width=4536' -o 10_two_phones_hero.png
+
+      - name: Inventory
+        run: |
+          set -euxo pipefail
+          find seeker-press-kit -type f -printf '%p\t%s bytes\n' | sort | tee seeker-press-kit/INVENTORY.txt
+
+      - name: Upload press kit artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: seeker-press-kit-source
+          path: seeker-press-kit
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
