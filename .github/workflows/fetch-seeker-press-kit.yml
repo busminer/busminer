@@ -24,19 +24,64 @@ jobs:
           rm -rf seeker-press-kit
           mkdir -p seeker-press-kit/drive seeker-press-kit/official-site
 
-      - name: Download public Google Drive folder
-        id: drive
+      - name: Resolve public Google Drive folder manifest
+        id: drive_manifest
         continue-on-error: true
         run: |
           set -euxo pipefail
           python -m pip install --upgrade pip gdown
-          gdown --folder "https://drive.google.com/drive/folders/1nBAP8JjbqvqDgIhzdESU_GjmuG3QWQDZ?usp=drive_link" \
-            -O seeker-press-kit/drive/
+          gdown "https://drive.google.com/drive/folders/1nBAP8JjbqvqDgIhzdESU_GjmuG3QWQDZ" \
+            --folder --json --quiet > seeker-press-kit/DRIVE_MANIFEST.json
 
-      - name: Mark Drive download failure if needed
-        if: steps.drive.outcome != 'success'
+      - name: Download visual source files from Drive
+        id: drive
+        if: steps.drive_manifest.outcome == 'success'
+        continue-on-error: true
         run: |
-          printf '%s\n' 'gdown could not fetch the public folder; inspect workflow logs.' > seeker-press-kit/DRIVE_DOWNLOAD_FAILED.txt
+          set -euxo pipefail
+          python - <<'PY'
+          import json
+          import pathlib
+          import subprocess
+
+          manifest_path = pathlib.Path('seeker-press-kit/DRIVE_MANIFEST.json')
+          items = json.loads(manifest_path.read_text(encoding='utf-8'))
+          allowed = {'.png', '.jpg', '.jpeg', '.webp', '.svg', '.eps', '.pdf', '.tif', '.tiff'}
+          root = pathlib.Path('seeker-press-kit/drive')
+          report = []
+
+          for item in items:
+              rel = pathlib.PurePosixPath(item['path'])
+              if rel.suffix.lower() not in allowed:
+                  report.append({'path': item['path'], 'url': item['url'], 'status': 'skipped_nonvisual'})
+                  continue
+              dest = root.joinpath(*rel.parts)
+              dest.parent.mkdir(parents=True, exist_ok=True)
+              proc = subprocess.run(
+                  ['gdown', item['url'], '-O', str(dest), '--quiet'],
+                  text=True,
+                  capture_output=True,
+              )
+              report.append({
+                  'path': item['path'],
+                  'url': item['url'],
+                  'status': 'downloaded' if proc.returncode == 0 else 'failed',
+                  'stderr': proc.stderr[-1000:],
+              })
+
+          pathlib.Path('seeker-press-kit/DRIVE_DOWNLOAD_REPORT.json').write_text(
+              json.dumps(report, indent=2, ensure_ascii=False), encoding='utf-8'
+          )
+          downloaded = sum(1 for row in report if row['status'] == 'downloaded')
+          print(f'Downloaded {downloaded} visual files from {len(items)} Drive entries')
+          if downloaded == 0:
+              raise SystemExit('No visual Drive assets were downloaded')
+          PY
+
+      - name: Mark Drive failure if needed
+        if: steps.drive_manifest.outcome != 'success' || steps.drive.outcome != 'success'
+        run: |
+          printf '%s\n' 'Drive manifest or visual download step failed; inspect the included reports.' > seeker-press-kit/DRIVE_DOWNLOAD_FAILED.txt
 
       - name: Download official Seeker page assets for cross-check
         run: |
@@ -77,6 +122,7 @@ jobs:
             "run_id": "${{ github.run_id }}",
             "run_number": "${{ github.run_number }}",
             "head_sha": "${{ github.sha }}",
+            "manifest_outcome": "${{ steps.drive_manifest.outcome }}",
             "drive_outcome": "${{ steps.drive.outcome }}",
             "artifact_name": "seeker-press-kit-source-${{ github.run_id }}"
           }
