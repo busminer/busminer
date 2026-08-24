@@ -7,19 +7,26 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   fetch:
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Prepare
         run: |
           set -euxo pipefail
+          rm -rf seeker-press-kit
           mkdir -p seeker-press-kit/drive seeker-press-kit/official-site
 
       - name: Download public Google Drive folder
+        id: drive
+        continue-on-error: true
         run: |
           set -euxo pipefail
           python -m pip install --upgrade pip gdown
@@ -27,7 +34,12 @@ jobs:
             --output seeker-press-kit/drive \
             --remaining-ok
 
-      - name: Download official Seeker page assets as fallback and cross-check
+      - name: Mark Drive download failure if needed
+        if: steps.drive.outcome != 'success'
+        run: |
+          printf '%s\n' 'gdown could not fetch the public folder; inspect workflow logs.' > seeker-press-kit/DRIVE_DOWNLOAD_FAILED.txt
+
+      - name: Download official Seeker page assets for cross-check
         run: |
           set -euxo pipefail
           cd seeker-press-kit/official-site
@@ -46,6 +58,8 @@ jobs:
         run: |
           set -euxo pipefail
           find seeker-press-kit -type f -printf '%p\t%s bytes\n' | sort | tee seeker-press-kit/INVENTORY.txt
+          printf 'Drive files: ' >> seeker-press-kit/INVENTORY.txt
+          find seeker-press-kit/drive -type f | wc -l >> seeker-press-kit/INVENTORY.txt
 
       - name: Upload press kit artifact
         uses: actions/upload-artifact@v4
@@ -55,3 +69,21 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 1
+
+      - name: Publish one-time run pointer
+        run: |
+          set -euxo pipefail
+          cat > .seeker-fetch-status.json <<JSON
+          {
+            "run_id": "${{ github.run_id }}",
+            "run_number": "${{ github.run_number }}",
+            "head_sha": "${{ github.sha }}",
+            "drive_outcome": "${{ steps.drive.outcome }}",
+            "artifact_name": "seeker-press-kit-source"
+          }
+          JSON
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .seeker-fetch-status.json
+          git commit -m 'chore: publish temporary Seeker asset fetch pointer'
+          git push
