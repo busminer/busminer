@@ -1,0 +1,111 @@
+name: Fetch Seeker Drive Previews
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  previews:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Drive press-image previews and brand assets
+        run: |
+          set -euxo pipefail
+          python -m pip install --upgrade pip gdown requests pillow
+          mkdir -p seeker-drive-previews/press seeker-drive-previews/brand
+          cp .seeker-drive-manifest.json seeker-drive-previews/DRIVE_MANIFEST.json
+          python - <<'PY'
+          import json
+          import re
+          import subprocess
+          from pathlib import Path
+          from urllib.parse import parse_qs, urlparse
+
+          import requests
+
+          rows = json.loads(Path('.seeker-drive-manifest.json').read_text(encoding='utf-8'))
+          session = requests.Session()
+          session.headers['User-Agent'] = 'Mozilla/5.0'
+          report = []
+
+          def drive_id(url: str) -> str:
+              return parse_qs(urlparse(url).query)['id'][0]
+
+          press = []
+          for row in rows:
+              m = re.fullmatch(r'Seeker Images/Seeker Press (\d+)\.png', row['path'])
+              if m:
+                  press.append((int(m.group(1)), row))
+
+          for number, row in sorted(press):
+              fid = drive_id(row['url'])
+              dest = Path('seeker-drive-previews/press') / f'Seeker_Press_{number:02d}.jpg'
+              url = f'https://drive.google.com/thumbnail?id={fid}&sz=w1800'
+              response = session.get(url, timeout=90)
+              response.raise_for_status()
+              dest.write_bytes(response.content)
+              report.append({'path': row['path'], 'source_url': row['url'], 'preview_url': url, 'saved': str(dest), 'bytes': len(response.content)})
+
+          wanted_brand_paths = {
+              'Seeker Logo Isolated/01 Black/Seeker_Isolated_Black.png',
+              'Seeker Logo Isolated/02 White/Seeker_Isolated_White.png',
+              'Seeker Solana Mobile Full Wordmark Lockup/01 Black/Wordmark_Lockup_Logo_Black.png',
+              'Seeker Solana Mobile Full Wordmark Lockup/02 White/Wordmark_Lockup_Logo_White.png',
+              'SKR Token Logo/S_Token_Circle_White.png',
+              'SKR Token Logo/S_Token_Square_White.png',
+              'Solana dApp Store Badges/Black/Solana dApp Store Badge Black.png',
+              'Solana dApp Store Badges/Teal/Solana dApp Store Badge Teal.png',
+              'Solana dApp Store Badges/White/Solana dApp Store Badge White.png',
+              'Solana Mobile Banners/SolanaMobileBanner_NewBrand_Minimal.png',
+              'Solana Mobile Banners/SolanaMobileBanner_NewBranding.png',
+          }
+          for row in rows:
+              if row['path'] not in wanted_brand_paths:
+                  continue
+              dest = Path('seeker-drive-previews/brand') / Path(row['path']).name
+              proc = subprocess.run(['gdown', row['url'], '-O', str(dest), '--quiet'], text=True, capture_output=True)
+              report.append({'path': row['path'], 'source_url': row['url'], 'saved': str(dest), 'status': 'downloaded' if proc.returncode == 0 else 'failed', 'stderr': proc.stderr[-500:]})
+
+          Path('seeker-drive-previews/DOWNLOAD_REPORT.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
+          print(f'Downloaded {len(press)} press previews and selected brand assets')
+          PY
+
+      - name: Validate and inventory
+        run: |
+          set -euxo pipefail
+          file seeker-drive-previews/press/* seeker-drive-previews/brand/* || true
+          find seeker-drive-previews -type f -printf '%p\t%s bytes\n' | sort | tee seeker-drive-previews/INVENTORY.txt
+
+      - name: Upload preview artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: seeker-drive-previews-${{ github.run_id }}
+          path: seeker-drive-previews
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
+      - name: Publish run pointer
+        run: |
+          set -euxo pipefail
+          cat > .seeker-preview-status.json <<JSON
+          {
+            "run_id": "${{ github.run_id }}",
+            "run_number": "${{ github.run_number }}",
+            "head_sha": "${{ github.sha }}",
+            "artifact_name": "seeker-drive-previews-${{ github.run_id }}"
+          }
+          JSON
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .seeker-preview-status.json
+          git commit -m 'chore: publish temporary Seeker preview pointer'
+          git push
