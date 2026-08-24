@@ -1,9 +1,6 @@
 name: Fetch Seeker Press Kit
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 permissions:
@@ -11,124 +8,6 @@ permissions:
 
 jobs:
   fetch:
-    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Prepare
-        run: |
-          set -euxo pipefail
-          rm -rf seeker-press-kit
-          mkdir -p seeker-press-kit/drive seeker-press-kit/official-site
-
-      - name: Resolve public Google Drive folder manifest
-        id: drive_manifest
-        continue-on-error: true
-        run: |
-          set -euxo pipefail
-          python -m pip install --upgrade pip gdown
-          gdown "https://drive.google.com/drive/folders/1nBAP8JjbqvqDgIhzdESU_GjmuG3QWQDZ" \
-            --folder --json --quiet > seeker-press-kit/DRIVE_MANIFEST.json
-
-      - name: Download visual source files from Drive
-        id: drive
-        if: steps.drive_manifest.outcome == 'success'
-        continue-on-error: true
-        run: |
-          set -euxo pipefail
-          python - <<'PY'
-          import json
-          import pathlib
-          import subprocess
-
-          manifest_path = pathlib.Path('seeker-press-kit/DRIVE_MANIFEST.json')
-          items = json.loads(manifest_path.read_text(encoding='utf-8'))
-          allowed = {'.png', '.jpg', '.jpeg', '.webp', '.svg', '.eps', '.pdf', '.tif', '.tiff'}
-          root = pathlib.Path('seeker-press-kit/drive')
-          report = []
-
-          for item in items:
-              rel = pathlib.PurePosixPath(item['path'])
-              if rel.suffix.lower() not in allowed:
-                  report.append({'path': item['path'], 'url': item['url'], 'status': 'skipped_nonvisual'})
-                  continue
-              dest = root.joinpath(*rel.parts)
-              dest.parent.mkdir(parents=True, exist_ok=True)
-              proc = subprocess.run(
-                  ['gdown', item['url'], '-O', str(dest), '--quiet'],
-                  text=True,
-                  capture_output=True,
-              )
-              report.append({
-                  'path': item['path'],
-                  'url': item['url'],
-                  'status': 'downloaded' if proc.returncode == 0 else 'failed',
-                  'stderr': proc.stderr[-1000:],
-              })
-
-          pathlib.Path('seeker-press-kit/DRIVE_DOWNLOAD_REPORT.json').write_text(
-              json.dumps(report, indent=2, ensure_ascii=False), encoding='utf-8'
-          )
-          downloaded = sum(1 for row in report if row['status'] == 'downloaded')
-          print(f'Downloaded {downloaded} visual files from {len(items)} Drive entries')
-          if downloaded == 0:
-              raise SystemExit('No visual Drive assets were downloaded')
-          PY
-
-      - name: Mark Drive failure if needed
-        if: steps.drive_manifest.outcome != 'success' || steps.drive.outcome != 'success'
-        run: |
-          printf '%s\n' 'Drive manifest or visual download step failed; inspect the included reports.' > seeker-press-kit/DRIVE_DOWNLOAD_FAILED.txt
-
-      - name: Download official Seeker page assets for cross-check
-        run: |
-          set -euxo pipefail
-          cd seeker-press-kit/official-site
-          curl -fL --retry 5 --retry-all-errors 'https://framerusercontent.com/images/uRl7JxfkTE29dvAyFy2juzd37yQ.png?height=2304&width=4096' -o 01_seed_vault_phone_back.png
-          curl -fL --retry 5 --retry-all-errors 'https://framerusercontent.com/images/A5razLqsxkVWckN83FMAayBysY.png?height=1918&width=2016' -o 02_seeker_activity.png
-          curl -fL --retry 5 --retry-all-errors 'https://framerusercontent.com/images/lXLHxWVMwKk85PAxg57ch8GS1Sg.png?height=1918&width=2016' -o 03_seed_vault_screen.png
-          curl -fL --retry 5 --retry-all-errors 'https://framerusercontent.com/images/2FKVDwETFoFAhQ1EHsGJbkKJo.png?height=1918&width=2016' -o 04_dapp_store.png
-          curl -fL --retry 5 --retry-all-errors 'https://framerusercontent.com/images/iQ2KIOsoLiXJdBKo8itPgMCfQ0.png?height=1918&width=2016' -o 05_stake_sol.png
-          curl -fL --retry 5 --retry-all-errors 'https://framerusercontent.com/images/B02G6DQtqd71wvPIoYTQYPoIeBU.png?height=2640&width=3024' -o 06_dapp_cards.png
-          curl -fL --retry 5 --retry-all-errors 'https://framerusercontent.com/images/DNHQn9xLCAgdUExTPRvaB407T0g.png?height=880&width=1008' -o 07_seeker_orb.png
-          curl -fL --retry 5 --retry-all-errors 'https://framerusercontent.com/images/htvrYyZqQhW6XD14SXi57kJ1zZw.png?height=1320&width=1542' -o 08_seed_vault_closeup.png
-          curl -fL --retry 5 --retry-all-errors 'https://framerusercontent.com/images/HGcfIctgy6Z7ijulmYefhJNZvVM.png?height=1320&width=1512' -o 09_seeker_id.png
-          curl -fL --retry 5 --retry-all-errors 'https://framerusercontent.com/images/r5AkKHp00UreluYDLhnB659Bm28.png?height=2118&width=4536' -o 10_two_phones_hero.png
-
-      - name: Inventory
-        run: |
-          set -euxo pipefail
-          find seeker-press-kit -type f -printf '%p\t%s bytes\n' | sort | tee seeker-press-kit/INVENTORY.txt
-          printf 'Drive files: ' >> seeker-press-kit/INVENTORY.txt
-          find seeker-press-kit/drive -type f | wc -l >> seeker-press-kit/INVENTORY.txt
-
-      - name: Upload press kit artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: seeker-press-kit-source-${{ github.run_id }}
-          path: seeker-press-kit
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: 1
-
-      - name: Publish one-time run pointer
-        run: |
-          set -euxo pipefail
-          cat > .seeker-fetch-status.json <<JSON
-          {
-            "run_id": "${{ github.run_id }}",
-            "run_number": "${{ github.run_number }}",
-            "head_sha": "${{ github.sha }}",
-            "manifest_outcome": "${{ steps.drive_manifest.outcome }}",
-            "drive_outcome": "${{ steps.drive.outcome }}",
-            "artifact_name": "seeker-press-kit-source-${{ github.run_id }}"
-          }
-          JSON
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add .seeker-fetch-status.json
-          git commit -m 'chore: publish temporary Seeker asset fetch pointer'
-          git push
+      - run: echo "Temporary workflow disabled after asset retrieval."
