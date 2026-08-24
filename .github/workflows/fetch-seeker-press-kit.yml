@@ -13,7 +13,7 @@ jobs:
   fetch:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -31,8 +31,7 @@ jobs:
           set -euxo pipefail
           python -m pip install --upgrade pip gdown
           gdown --folder "https://drive.google.com/drive/folders/1nBAP8JjbqvqDgIhzdESU_GjmuG3QWQDZ?usp=drive_link" \
-            --output seeker-press-kit/drive \
-            --remaining-ok
+            -O seeker-press-kit/drive/
 
       - name: Mark Drive download failure if needed
         if: steps.drive.outcome != 'success'
@@ -64,7 +63,7 @@ jobs:
       - name: Upload press kit artifact
         uses: actions/upload-artifact@v4
         with:
-          name: seeker-press-kit-source
+          name: seeker-press-kit-source-${{ github.run_id }}
           path: seeker-press-kit
           if-no-files-found: error
           compression-level: 0
@@ -79,7 +78,7 @@ jobs:
             "run_number": "${{ github.run_number }}",
             "head_sha": "${{ github.sha }}",
             "drive_outcome": "${{ steps.drive.outcome }}",
-            "artifact_name": "seeker-press-kit-source"
+            "artifact_name": "seeker-press-kit-source-${{ github.run_id }}"
           }
           JSON
           git config user.name 'github-actions[bot]'
